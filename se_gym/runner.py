@@ -13,8 +13,11 @@ import os
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+import regex
+from fuzzywuzzy import fuzz
 
 from . import config
+from . import utils
 
 logger = logging.getLogger("dockerconnector")
 
@@ -76,7 +79,11 @@ class Container:
 
     def run_command(self, command: str):
         logger.debug(f"Running command {command}")
-        return self.container.exec_run(cmd=command, stdout=True, stderr=True)
+        res = self.container.exec_run(cmd=command, stdout=True, stderr=True)
+        logger.debug(
+            f"Command {command} finished with exit code {res.exit_code}, output {res.output}"
+        )
+        return res
 
     def destroy(self):
         self.container.stop()
@@ -98,14 +105,19 @@ class CodeExecutor:
         shutil.copytree(src=code_base_root, dst=f"{self.temp_dir}/", dirs_exist_ok=True)
         with open(f"{self.temp_dir}/file.patch", "w") as file:
             file.write(patch)
+        logger.debug("Starting container")
         self.container = Container(mount_dir=self.temp_dir)  # start a container
+        logger.debug(f"Container started with mount dir {self.temp_dir}")
 
     def destroy(self):
         """
         Tear down the container and remove the temporary directory.
         """
         self.container.destroy()
-        shutil.rmtree(self.temp_dir, onexc=CodeExecutor._shutil_onexc)
+        try:
+            shutil.rmtree(self.temp_dir, onexc=CodeExecutor._shutil_onexc)
+        except Exception:
+            shutil.rmtree(self.temp_dir)
 
     @staticmethod
     def _shutil_onexc(func, path, exc_info):
@@ -128,7 +140,9 @@ def check_patch(code_base_root: str, patch: str):
     with open(rand_path, "w") as file:
         file.write(patch)
         logger.debug(f"writing patch to file {rand_path}")
-    res = subprocess.check_output(args=config.GIT_CHECK_PATCH, cwd=code_base_root)
+    res = subprocess.check_output(
+        args=config.GIT_CHECK_PATCH.split(" "), cwd=code_base_root
+    )
     if res.returncode != 0:
         logger.info(
             f"Failed to apply patch STDOUT:{res.stdout} STDERR:{res.stderr} PATCH:{patch}"
@@ -136,33 +150,50 @@ def check_patch(code_base_root: str, patch: str):
         raise MalformedPatchException("Failed to apply patch", res.stdout)
 
 
-def generate_patch(
-    code_base_root: str, filename: str, old_code: str, new_code: str
-) -> str:
+def get_code_span(full_code: str, partial_code: str) -> str:
+    ids_max = str(int(len(partial_code) * config.FUZZY_MATCH_THRESHOLD / 100))
+    try:
+        match = regex.search(
+            "(?b)(" + regex.escape(partial_code) + "){i<=" + ids_max + "}", full_code
+        )
+    except Exception as e:
+        logger.info("Pattern exception", exc_info=True)
+        raise ValueError("Old code not found in the file")
+    if match is None:
+        raise ValueError("Old code not found in the file")
+    else:
+        ratio = fuzz.ratio(match.group(), partial_code)
+        if ratio < config.FUZZY_MATCH_THRESHOLD:
+            raise ValueError(f"Old code not found in the file, fuzzy match {ratio}")
+    return match.span()
+
+
+def generate_patch(code_base_root: str, filename: str, old_code: str, new_code: str):
     """
     Generate a patch file from the old and new code.
     """
     # discard current git changes in the codebase
-    subprocess.run(config.GIT_DISCARD_CHANGES, cwd=code_base_root)
+    subprocess.run(config.GIT_DISCARD_CHANGES.split(" "), cwd=code_base_root)
     # find the file to change
-    file_path = os.path.join(code_base_root, filename)
-    if not os.path.exists(file_path):
-        logger.info(f"File {file_path} not found")
-        raise ValueError(f"File {file_path} not found")
+    file_path = utils.find_file(code_base_root, filename)
+    if file_path.startswith("."):
+        file_path = file_path[1:]
     # find the old code in the file
-    with open(file_path, "r") as file:
-        file_content = file.read()
-    if old_code not in file_content:
-        logger.info(f"Old code not found in the file {file_path}")
-        raise ValueError(f"Old code not found in the {file_path}")
+    with open(code_base_root + file_path, "r") as file:
+        old_file_content = file.read()
+    span = get_code_span(old_file_content, old_code)
     # replace the old code with the new code
-    new_file_content = file_content.replace(old_code, new_code)
-    with open(file_path, "w") as file:
+    new_file_content = (
+        old_file_content[: span[0]] + new_code + old_file_content[span[1] :]
+    )
+    with open(code_base_root + file_path, "w") as file:
         file.write(new_file_content)
     # create a patch file running git diff
-    patch = subprocess.run(config.GIT_DIFF, cwd=code_base_root, stdout=subprocess.PIPE)
+    patch = subprocess.run(
+        config.GIT_DIFF.split(" "), cwd=code_base_root, stdout=subprocess.PIPE
+    )
     # discard the changes
-    subprocess.run(config.GIT_DISCARD_CHANGES, cwd=code_base_root)
+    subprocess.run(config.GIT_DISCARD_CHANGES.split(" "), cwd=code_base_root)
     return patch.stdout.decode("utf-8")
 
 
@@ -175,7 +206,9 @@ def apply_patch(code_base_root: str, patch: str):
         patch (str): The patch to apply to the codebase. This file might be corrupted, in which case the function will raise an MalformedPatchException.
     """
     executor = CodeExecutor(code_base_root, patch)
-    apply_log = executor.container.run_command(config.GIT_APPLY_PATCH)  # Try to patch
+    apply_log = executor.container.run_command(
+        config.GIT_APPLY_PATCH.split(" ")
+    )  # Try to patch
     executor.destroy()
     # Check if the patch was applied successfully
     if apply_log.exit_code != 0:
@@ -185,6 +218,7 @@ def apply_patch(code_base_root: str, patch: str):
     logger.info("Patch applied successfully")
 
 
+@utils.cached()
 def apply_patch_and_test(
     code_base_root: str, patch: str, command: str = "pytest --junitxml=testresults.xml"
 ) -> ET.Element:
@@ -201,11 +235,29 @@ def apply_patch_and_test(
     """
 
     executor = CodeExecutor(code_base_root, patch)
-    apply_log = executor.container.run_command(config.GIT_APPLY_PATCH)  # Try to patch
+    apply_log = executor.container.run_command(
+        config.GIT_APPLY_PATCH.split(" ")
+    )  # Try to patch
     if apply_log.exit_code != 0:  # this shouldn't be happening
         outp = apply_log.output.decode("utf-8")
         logger.error("Failed to apply patch", outp)
         raise MalformedPatchException("Failed to apply patch", outp)
+    test_log = executor.container.run_command(command)  # Run the tests
+    test_xml = executor.container.run_command("cat testresults.xml")
+    executor.destroy()
+    xml_str = test_xml.output.decode("utf-8")
+    tree = ET.fromstring(xml_str)
+    return tree
+
+
+def _just_test(
+    code_base_root: str, command: str = "pytest --junitxml=testresults.xml"
+) -> ET.Element:
+    """
+    Run tests on a codebase.
+    This is a helper function for testing purposes.
+    """
+    executor = CodeExecutor(code_base_root, "")
     test_log = executor.container.run_command(command)  # Run the tests
     test_xml = executor.container.run_command("cat testresults.xml")
     executor.destroy()

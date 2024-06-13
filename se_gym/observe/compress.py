@@ -1,5 +1,6 @@
 import abc
 
+__all__ = ["Compression", "NoCompression"]
 
 class Compression(abc.ABC):
     @abc.abstractmethod

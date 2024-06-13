@@ -3,6 +3,7 @@ def get_lmu_openai_client():
     import httpx
     import os
     import dotenv
+    from . import utils
 
     dotenv.load_dotenv()
     USERNAME = os.getenv("API_USERNAME")
@@ -13,4 +14,5 @@ def get_lmu_openai_client():
     client = openai.OpenAI(
         base_url="https://ollama.mobile.ifi.lmu.de/v1/", api_key="none"
     )
+    utils.check_client(client)
     return client

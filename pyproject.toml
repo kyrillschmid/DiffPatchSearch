@@ -29,12 +29,17 @@ tqdm = "^4.66.2"
 typing_extensions = "^4.11.0"
 instructor = "1.2.5"
 tenacity = "8.3.0"
-tree_sitter_languages = "1.10.2"
-tree-sitter = "0.21.3"
 datasets = "^2.19.1"
-aider-chat = "0.35.0"
 rank_bm25 = "^0.2.2"
+regex = "^2024.5.15"
+fuzzywuzzy = "^0.18.0"
+python-Levenshtein = "^0.25.0"
+pyarrow = "^16.0.0"
+pandas = "^2.2.2"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pyright]
+exclude = ["./temp/**"]

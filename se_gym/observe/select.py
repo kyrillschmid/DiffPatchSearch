@@ -1,10 +1,11 @@
 import abc
 import rank_bm25
-import copy
 import logging
 from . import read
 from se_gym import api
 import typing
+
+__all__ = ["Selector", "BM25Selector", "FullSelector"]
 
 logger = logging.getLogger("observe.select")
 
@@ -45,6 +46,16 @@ class Selector(abc.ABC):
         self.cache = self._call_safe(state, documents)
         return self.cache
 
+    def get_failing_issues(
+        self, state: api.State, documents: typing.List[read.Document]
+    ):
+        docs = []
+        for doc in documents:
+            if state.fail_to_pass:
+                if doc.path in state.fail_to_pass:
+                    docs.append(doc.get_formatted())
+        return "\n".join(docs)
+
 
 class BM25Selector(Selector):
     """
@@ -68,7 +79,9 @@ class BM25Selector(Selector):
             documents,
             n=self.num_relevant_files,
         )
-        return "\n".join(selected.text for selected in selected)
+        return "\n".join(
+            selected.get_formatted() for selected in selected
+        ) + self.get_failing_issues(state, documents)
 
 
 class FullSelector(Selector):
@@ -80,7 +93,7 @@ class FullSelector(Selector):
         self, state: api.State, documents: typing.List[read.Document]
     ) -> str:
         formatted = "".join([d.get_formatted() for d in documents])
-        return formatted
+        return formatted + self.get_failing_issues(state, documents)
 
 
 class VectorSimilaritySelector(Selector): ...

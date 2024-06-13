@@ -97,13 +97,14 @@ class ChangePatchOutput(OutputSchema):
     new_code: str = pydantic.Field(
         description="The new code to replace the original code."
     )
-    # do not initialize this field, it will be generated
-    patch_file: typing.Optional[str] = pydantic.Field(no_init=True)
 
     prompt: typing.ClassVar[str] = """
-The output should be formatted as a JSON instance that conforms to the JSON schema below.\n\n
-JSON_FORMAT_STRING
-\n
+The output should be formatted as a JSON instance that conforms to the JSON schema below.
+{
+    'filename': The filename of the file to be changed. Use the exact filename that was provided to you. Do not modify it. If you are modifying multiple files, only list one file here. You will be able to modify multiple files in the next step.
+    'old_code': This is the original code provided above. Do not modify it, just paste the part you want to replace.
+    'new_code': This code will replace the original code. 
+}
 
 Make sure you use the proper filename. Do not filenames like `/home/user/scratch/`, but always use the exact filename that you see in the prompt. Do not modify the filename. 
 The `/scratch` directory does not exist, use the known directories and files.
@@ -118,27 +119,38 @@ EXAMPLE: If you want to replace the code in the file `./src/main.py` from `Hello
 
 Only reply using this exact JSON format. Do not include anything else in your response.
 Only include one change in your response. If you need to make multiple changes, you will be able to do so in the next step.
+Your answer must be in JSON format. Make sure to include the keys "filename", "old_code", and "new_code". Refrence filenames exactly as they are provided to you. Only use the "filename", "old_code", and "new_code" keys.
+REPLACE ONLY THE CODE THAT NEEDS TO BE CHANGED, NOT THE ENTIRE FILE. WRAP THE NEW CODE IN THE SAME FUNCTION OR CLASS AS THE OLD CODE.
 
 """
 
     @pydantic.root_validator(pre=True)
     def generate_patch(cls, v):
-        # remove trailing whitespace and trailing `./` and `/`
-        v["filename"] = v["filename"].strip()
-        if v["filename"].startswith("./"):
-            v["filename"] = v["filename"][2:]
-        if v["filename"].startswith("/"):
-            v["filename"] = v["filename"][1:]
-        if cls.code_base_root is None:
-            logger.error("No code base root provided, cannot generate patch")
-            raise ValueError("No code base root provided, cannot generate patch")
-        patch_str = runner.generate_patch(
-            code_base_root=cls.code_base_root,
-            filename=v["filename"],
-            old_code=v["old_code"],
-            new_code=v["new_code"],
-        )
-        cls.patch_file = patch_str
-        v["patch_file"] = patch_str
-        logger.info(f"Patch generated successfully: {cls.patch_file}")
-        return v
+        logger.info(f"Validating {v}")
+        try:
+            # remove trailing whitespace and trailing `./` and `/`
+            for f in "filename", "old_code", "new_code":
+                if f not in v:
+                    logger.error(f"Missing field {f} in {v}")
+                    raise ValueError(f"Missing field {f} in {v}")
+            v["filename"] = v["filename"].strip()
+            if v["filename"].startswith("./"):
+                v["filename"] = v["filename"][2:]
+            if v["filename"].startswith("/"):
+                v["filename"] = v["filename"][1:]
+            if cls.code_base_root is None:
+                logger.error("No code base root provided, cannot generate patch")
+                raise ValueError("No code base root provided, cannot generate patch")
+            patch_str = runner.generate_patch(
+                code_base_root=cls.code_base_root,
+                filename=v["filename"],
+                old_code=v["old_code"],
+                new_code=v["new_code"],
+            )
+            cls.patch_file = patch_str
+            v["patch_file"] = patch_str
+            logger.info(f"Patch generated successfully: {cls.patch_file}")
+            return v
+        except Exception as e:
+            logger.error("Error generating patch", exc_info=True)
+            raise e

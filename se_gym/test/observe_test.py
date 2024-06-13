@@ -2,6 +2,25 @@ import os
 import se_gym
 
 
+dummy_file = '''
+class A:
+    """This is a class"""
+    def __init__(self):
+        """This is a constructor"""
+        self.a = 1
+
+    def get_a(self) -> int:
+        """This is a getter"""
+        return self.a
+
+def make_aa() -> int:
+    """This is a top-level function"""
+    a = A()
+    a = a.get_a()
+    return a
+'''
+
+
 def _download_einops():
     """
     Download einops repository to ./temp/einops
@@ -21,6 +40,18 @@ print("einops") does not work
         )
 
 
+def test_astreader():
+    ar = se_gym.observe.read.ASTReader
+    docs = ar._ast2doc("dummypath", dummy_file)
+    for doc in docs:
+        assert doc.path == "dummypath"
+        assert doc.full_text == dummy_file
+        assert len(doc.text) > 0
+        assert len(doc.full_text) > 0
+        assert len(doc.text) < len(doc.full_text)
+    print(docs)
+
+
 def test_observer1():
     _download_einops()
     state = se_gym.api.State(path="./temp/einops", issue="einmix is not working")
@@ -33,6 +64,7 @@ def test_observer1():
                 "./temp/einops/einops/layers/_einmix.py",
             ],
         ),
+        se_gym.observe.read.ASTReader(root_dir="./temp/einops"),
     ]
 
     selectors = [

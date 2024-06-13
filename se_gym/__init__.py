@@ -4,3 +4,5 @@ from .fitness import percent_successfull, num_failed_tests
 from .api import make
 from . import observe
 from . import openai_lmu
+from .client import set_client
+from . import config

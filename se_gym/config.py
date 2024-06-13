@@ -1,4 +1,4 @@
-MAX_RETRIES = 5
+MAX_RETRIES = 3
 TIMEOUT_SECONDS = 60
 DEFAULT_SAVE_PATH = "./temp"
 DOCKER_TAG = "pytest-env"
@@ -7,3 +7,5 @@ GIT_CHECK_PATCH = "git apply --check --ignore-space-change --ignore-whitespace -
 GIT_DISCARD_CHANGES = "git reset --hard HEAD"
 GIT_DIFF = "git diff"
 MODEL_NAME = "llama3:8b"
+EVO_MODEL_NAME = None
+FUZZY_MATCH_THRESHOLD = 80

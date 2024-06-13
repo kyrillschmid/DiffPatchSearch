@@ -23,6 +23,8 @@ class Observer:
         self.compressor = compressor
 
     def __call__(self, state):
+        if isinstance(state, list):
+            return [self(s) for s in state]
         all_documents = self.reader.get_documents()
         selected = self.selector(state, all_documents)
         full = self._get_issue(state) + selected + self._get_logs(state)
@@ -51,3 +53,14 @@ class Observer:
 </LOGS>
 =========================
     """
+
+    def from_env(self, env):
+        self.reader = self.reader.from_env(env)
+        self.clear_cache()
+        return self
+
+    def clear_cache(self):
+        self.reader.clear_cache()
+        self.selector.clear_cache()
+        return self
+    
